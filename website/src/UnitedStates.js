@@ -48,6 +48,24 @@ export class CovidSummarizable {
     }
   }
 
+  hospitals() {
+    if (!this.normalizedRaw_) {
+      return {
+        'bedCount': "N/A",
+        'count': "N/A",
+      };
+    }
+
+    return {
+        count: this.normalizedRaw_.hospitals, // to be deprecated
+        bedCount: this.normalizedRaw_.beds,   // to be deprecated
+        bedsICU: this.normalizedRaw_.bedsICU,
+        bedsAvail: this.normalizedRaw_.bedsAvail,
+        hospitals: this.normalizedRaw_.hospitals,
+        beds: this.normalizedRaw_.beds,
+      };
+  }
+
   summary() {
     if (!this.normalizedRaw_) {
       return {
@@ -86,19 +104,34 @@ export class CovidSummarizable {
 
     return summarized;
   }
+
+  totalConfirmed() {
+    return this.summary().confirmed;
+  }
 }
 
 export class Country extends CovidSummarizable {
 
   constructor() {
     super(CovidData);
-    this.metrosById_ = new Map();
-    this.metrosByCountyId_ = new Map();
+
+    // Yikes...
+    this.normalizedRaw_.beds = 924107;
+    this.normalizedRaw_.hospitals = 6146;
+
+    // Metros span state lines, but we have a notion of a hierarchy in
+    // header:
+    // county -> metro (maybe) -> state -> country
+    //
+    // To make this work, we make a Metro object for every state a metro
+    // intersects. metroByStatesByIds_ is a
+    // Map<metro id, Map<state two letter code, Metro>>
+    this.metroByStatesByIds_ = new Map();
     this.statesById_ = new Map();
     this.statesByTwoLetterName_ = new Map();
     this.countiesById_ = new Map();
-    this.name = "US";
-    this.longName = "United States";
+    this.name = "United States";
+    this.shortName = "US";
 
     for (const [id, data] of Object.entries(this.covidRaw_)) {
       // Check if this looks like a state FIPS id
@@ -109,22 +142,6 @@ export class Country extends CovidSummarizable {
       const state = new State(id, data, this);
       this.statesById_.set(id, state);
       this.statesByTwoLetterName_.set(state.twoLetterName, state);
-
-      for (const county of state.allCounties()) {
-        this.countiesById_.set(county.id, county)
-      }
-    }
-
-    for (const [id, data] of Object.entries(this.covidRaw_.Metros)) {
-      const state = this.statesById_.get(data.StateFIPS);
-      state.addMetro(id, data, this);
-
-      this.metrosById_.set(id, state.metroForId(id));
-      let metro = state.metroForId(id);
-      this.metrosById_.set(id, metro);
-      for (const county of metro.allCounties()) {
-        this.metrosByCountyId_.set(county.id, metro);
-      }
     }
 
     for (const data of CountyGeoData) {
@@ -133,7 +150,31 @@ export class Country extends CovidSummarizable {
       this.statesById_.get(stateId).countyForId(id).update(data);
     }
 
+    for (const state of this.statesById_.values()) {
+      for (const county of state.allCounties()) {
+        this.countiesById_.set(county.id, county);
+      }
+    }
+
+    for (const [id, data] of Object.entries(this.covidRaw_.Metros)) {
+      const metroByStates = new Map();
+      this.metroByStatesByIds_.set(id, metroByStates);
+
+      const states = new Set();
+      for(const county of data.Counties) {
+        states.add(this.countiesById_.get(county).state());
+      }
+      states.forEach(state => {
+        state.addMetro(id, data, this);
+        metroByStates.set(state.id, state.metroForId(id));
+      });
+    }
+
     this.statesById_.forEach(state => state.reindex());
+  }
+
+  parent() {
+    return undefined;
   }
 
   testData() {
@@ -143,10 +184,6 @@ export class Country extends CovidSummarizable {
       hospitalized: this.covidRaw_.Summary.hospitalized,
       hospitalizedIncreased: this.covidRaw_.Summary.hospitalizedIncreased,
     }
-  }
-
-  metroContainingCounty(county) {
-    return this.metrosByCountyId_.get(county.id);
   }
 
   countyForId(id) {
@@ -161,12 +198,16 @@ export class Country extends CovidSummarizable {
     return [...this.countiesById_.values()];
   }
 
-  metroForId(id) {
-    return this.metrosById_.get(id);
+  metroByStatesForId(id) {
+    return this.metroByStatesByIds_.get(id);
   }
 
   allMetros() {
-    return [...this.metrosById_.values()];
+    return Array.from(this.metroByStatesByIds_.values())
+        .map(
+            metroByStates =>
+                // Only grab one state if it spans state lines
+                metroByStates.values().next().value);
   }
 
   stateForId(id) {
@@ -187,17 +228,6 @@ export class Country extends CovidSummarizable {
 
   async deathsAsync() {
     return this.covidRaw_.Summary.Death;
-  }
-
-  hospitals() {
-    return {
-      count: this.covidRaw_.Summary.hospitals, // to be deprciated
-      bedCount: this.covidRaw_.Summary.beds,   // to be deprciated
-      bedsICU: this.covidRaw_.Summary.bedsICU,
-      bedsAvail: this.covidRaw_.Summary.bedsAvail,
-      hospitals: this.covidRaw_.Summary.hospitals,
-      beds: this.covidRaw_.Summary.beds,
-    };
   }
 
   async projectionsAsync() {
@@ -269,8 +299,9 @@ export class State extends CovidSummarizable {
     this.id = id;
     this.country_ = country;
     this.name = CountyInfo.getStateNameFromFips(id);
-    this.longName = this.name;
     this.twoLetterName = Object.values(covidRaw)[0]['StateName']
+    this.shortName = this.twoLetterName;
+
     if (!this.twoLetterName) {
       this.twoLetterName = CountyInfo.getStateAbbreviationFromFips(this.id);
       if (!this.twoLetterName) {
@@ -282,15 +313,6 @@ export class State extends CovidSummarizable {
     this.countiesByName_ = new Map();
     this.metros_ = new Map();
     this.metrosByCounty_ = new Map();
-
-    this.hospitals_ = {
-      count: covidRaw.Summary.hospitals, // to be deprciated
-      bedCount: covidRaw.Summary.beds,   // to be deprciated
-      bedsICU: covidRaw.Summary.bedsICU,
-      bedsAvail: covidRaw.Summary.bedsAvail,
-      hospitals: covidRaw.Summary.hospitals,
-      beds: covidRaw.Summary.beds,
-    };
 
     // Force load counties so nearby works properly and we get "Statewide
     // Unallocated"s.
@@ -369,10 +391,6 @@ export class State extends CovidSummarizable {
     return this.covidRaw_.Summary.Death;
   }
 
-  hospitals() {
-    return this.hospitals_;
-  }
-
   newCases() {
     return this.covidRaw_.Summary.LastConfirmedNew;
   }
@@ -394,14 +412,6 @@ export class State extends CovidSummarizable {
     let data = await fetchTestingDataStates();
     return data.filter(d => d.state === this.twoLetterName)
       .sort((a, b) => a.date - b.date);
-  }
-
-  totalConfirmed() {
-    if (!this.covidRaw_) {
-      return 0;
-    }
-
-    return this.covidRaw_.Summary.LastConfirmed;
   }
 
   reindex() {
@@ -505,20 +515,11 @@ export class Metro extends CovidSummarizable {
     this.id = id;
     this.state_ = state;
     this.name = covidRaw['Name'];
-    this.longName = `${this.name}, ${this.state_.longName}`;
     this.counties_ = this.covidRaw_.Counties.map(id => {
       // not all counties in a metro belong to the same state
       // can't call state.countyForId() directly
       return country.countyForId(id);
     }).filter(c => c); // some county may not have data
-    this.hospitals_ = {
-      count: covidRaw.Summary.hospitals, // to be deprciated
-      bedCount: covidRaw.Summary.beds,   // to be deprciated
-      bedsICU: covidRaw.Summary.bedsICU,
-      bedsAvail: covidRaw.Summary.bedsAvail,
-      hospitals: covidRaw.Summary.hospitals,
-      beds: covidRaw.Summary.beds,
-    };
   }
 
   allCounties() {
@@ -542,18 +543,6 @@ export class Metro extends CovidSummarizable {
   }
   async deathsAsync() {
     return this.covidRaw_.Summary.Death;
-  }
-
-  hospitals() {
-    return this.hospitals_;
-  }
-
-  totalConfirmed() {
-    if (!this.covidRaw_) {
-      return 0;
-    }
-
-    return this.covidRaw_.Summary.LastConfirmed;
   }
 
   newCases() {
@@ -607,14 +596,6 @@ export class County extends CovidSummarizable {
 
     if (covidRaw) {
       this.name = covidRaw['CountyName'];
-      this.hospitals_ = {
-        count: covidRaw.hospitals, // to be deprciated
-        bedCount: covidRaw.beds,   // to be deprciated
-        bedsICU: covidRaw.bedsICU,
-        bedsAvail: covidRaw.bedsAvail,
-        hospitals: covidRaw.hospitals,
-        beds: covidRaw.beds,
-      };
       this.population_ = covidRaw.Population;
     } else {
       this.name = UNKNOWN_COUNTY_NAME;
@@ -625,11 +606,10 @@ export class County extends CovidSummarizable {
     }
 
     this.state_ = state;
-    this.longName = `${this.name}, ${this.state_.longName}`;
   }
 
   metro() {
-    return this.state_.country().metroContainingCounty(this);
+    return this.state_.metroContainingCounty(this);
   }
 
   state() {
@@ -637,7 +617,7 @@ export class County extends CovidSummarizable {
   }
 
   parent() {
-    return this.state();
+    return this.metro() || this.state();
   }
 
   fips() {
@@ -713,24 +693,12 @@ export class County extends CovidSummarizable {
     return this.covidRaw_.Death;
   }
 
-  hospitals() {
-    return this.hospitals_;
-  }
-
   population() {
     return this.population_;
   }
 
   stayHomeOrder() {
     return this.covidRaw_.StayHomeOrder;
-  }
-
-  totalConfirmed() {
-    if (!this.covidRaw_) {
-      return 0;
-    }
-
-    return this.covidRaw_.LastConfirmed;
   }
 
   newCases() {
