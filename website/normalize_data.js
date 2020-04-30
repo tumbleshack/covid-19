@@ -11,6 +11,7 @@ const { linearRegression } = require('simple-statistics');
 const ShelterInPlace = require("../data/shelter-in-place/shelter.json");
 const USRecovery = require("./src/data/us_recovery.json");
 const CountyInfo = require('covidmodule').CountyInfo;
+const Util = require('covidmodule').Util;
 
 const DFHCounty = require("./src/data/DFH-County.json");
 const DFHState = require("./src/data/DFH-State.json");
@@ -26,11 +27,18 @@ function pad(n) { return n < 10 ? '0' + n : n }
  * Initialize State Nodes
  */
 
-const AllStateFips = CountyInfo.getAllStateFips();
+const AllStateFips = CountyInfo.getAllStateFips().concat(
+  ["88", "99", "97", "96"]
+);
 for (let statefips of AllStateFips) {
-  AllData[statefips] = {};
+  AllData[statefips] = {
+    Summary: {
+      StateFIPS: statefips,
+      Confirmed: {},
+      Death: {},
+    },
+  };
 }
-
 
 // --------------------------------------------------------------
 // ---- function area
@@ -70,7 +78,7 @@ const TableLookup = (() => {
 function fix_county_name(county_name, county_fips) {
   let county = TableLookup[county_fips];
   if (!county) {
-    if (county_name !== "Statewide Unallocated") {
+    if (county_name !== "Statewide Unallocated" && county_name !== "Unassigned") {
       console.log(`${county_name} with ${county_fips} doesn't exist`)
     }
     if (county_name != 'St. Louis County') {
@@ -84,7 +92,7 @@ function fix_county_name(county_name, county_fips) {
 function createCountyObject(state_fips, state_name, county_fips, county_name) {
 
   if (!state_fips || !state_name) {
-    console.log("creating to create null state and fips ---------");
+    console.log(`creating to create null state and fips (${state_fips}, ${state_name})`);
     return null;
   }
 
@@ -238,18 +246,33 @@ function processJHUDataPoint(c, date) {
   let state_fips = CountyInfo.getFipsFromStateName(b.Province_State);
   if (county_fips === null && b.Admin2 === "Harris" && b.Province_State === "Texas") {
     county_fips = "48201";
-  } else if (county_fips === null) {
+  } else if (b.Province_State === "US Military") {
+    state_fips = "96";
+    county_fips = ("" + b.UID).slice(3, 8);
+  } else if (b.UID === 84070013 || b.UID == 84070012) { // prison
+    AllData["97"].Summary.Confirmed[date] = b.Confirmed;
+    AllData["97"].Summary.Death[date] = b.Death;
+    return;
+  } else if (b.Province_State === "Northern Mariana Islands") {
+    AllData["69"].Summary.Confirmed[date] = b.Confirmed;
+    AllData["69"].Summary.Death[date] = b.Death;
+    return;
+  }
+  else if (county_fips === null) {
     county_fips = "0";
-  } else {
-    if (county_fips.slice(0, 2) === "90") {
-      county_fips = "0"; // until we find a better solution, JHU data change at 4/2
-    }
+  } else if (county_fips.slice(0, 2) === "90") {
+    county_fips = "0"; // until we find a better solution, JHU data change at 4/2
   }
   let county = getCountyNode(state_fips, county_fips);
   if (!county) {
+    let statescode = states.getStateCodeByStateName(b.Province_State);
+    if (b.Province_State === "US Military") {
+      statescode = "AY";
+    }
+
     county = createCountyObject(
       state_fips,
-      states.getStateCodeByStateName(b.Province_State),
+      statescode,
       county_fips,
       b.Admin2,
     )
@@ -277,6 +300,9 @@ function processJHU(dataset, date) {
 function fillarrayholes(v, increaseonly = true) {
   const today = moment().format("MM/DD/YYYY");
   let keys = Object.keys(v).sort((a, b) => moment(a, "MM/DD/YYYY").toDate() - moment(b, "MM/DD/YYYY").toDate());
+  if (keys.length === 0) {
+    return v;
+  }
   let key = keys[0];
   while (key !== today) {
     let lastvalue = v[key];
@@ -298,14 +324,41 @@ function fillarrayholes(v, increaseonly = true) {
   return v;
 }
 
+
+
 function fillholes() {
+  const deprecated_counties = {
+    "49001": true,
+    "49003": true,
+    "49005": true,
+    "49007": true,
+    "49009": true,
+    "49013": true,
+    "49015": true,
+    "49017": true,
+    "49019": true,
+    "49021": true,
+    "49023": true,
+    "49025": true,
+    "49027": true,
+    "49029": true,
+    "49031": true,
+    "49033": true,
+    "49039": true,
+    "49041": true,
+    "49047": true,
+    "49053": true,
+    "49055": true,
+  };
   for (s in AllData) {
     state = AllData[s];
     for (c in state) {
       let county = state[c];
-      county.Confirmed = fillarrayholes(county.Confirmed, c !== "0");
-      county.Death = fillarrayholes(county.Death, c !== "0");
-      setCountyNode(s, c, county);
+      if (c.length === 5 && c !== "0" && !deprecated_counties[c]) {
+        county.Confirmed = fillarrayholes(county.Confirmed, c !== "0");
+        county.Death = fillarrayholes(county.Death, c !== "0");
+        setCountyNode(s, c, county);
+      }
     }
   }
 }
@@ -334,8 +387,12 @@ function getValueFromLastDate(v, comment) {
 function mergeTwoMapValues(m1, m2) {
   for (let i in m2) {
     let a = m1[i];
-    a = a ? a : 0;
-    a += m2[i];
+    if (isNaN(a)) {
+      a = 0;
+    }
+    if (!isNaN(m2[i])) {
+      a += m2[i];
+    }
     m1[i] = a;
   }
 }
@@ -371,8 +428,10 @@ function summarize_counties() {
     state = AllData[s];
     for (c in state) {
       county = state[c];
-      county = summarize_one_county(county);
-      setCountyNode(s, c, county);
+      if (c !== "Summary") {
+        county = summarize_one_county(county);
+        setCountyNode(s, c, county);
+      }
     }
   }
 }
@@ -383,16 +442,21 @@ function summarize_states() {
 
   for (s in AllData) {
     state = AllData[s];
-    // need to 
     Confirmed = {};
     Death = {};
     for (c in state) {
       county = state[c];
       mergeTwoMapValues(Confirmed, county.Confirmed)
       mergeTwoMapValues(Death, county.Death)
-
     }
+
+    if (s !== "undefined") {
+      Confirmed = fillarrayholes(Confirmed, true);
+      Death = fillarrayholes(Death, true);
+    }
+
     let Summary = {};
+    Summary.StateFIPS = s;
     Summary.Confirmed = Confirmed;
     Summary.Death = Death;
 
@@ -420,9 +484,10 @@ function summarize_states() {
 
 
 function summarize_USA() {
+
   // summarize data for US
-  USConfirmed = {};
-  USDeath = {};
+  let USConfirmed = {};
+  let USDeath = {};
 
   for (s in AllData) {
     state = AllData[s];
@@ -689,6 +754,105 @@ function processAllJHU() {
   }
 }
 
+async function processAllJHUGithub() {
+  const csvConfirmed = "../COVID-19/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv"
+  const csvDeath = "../COVID-19/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"
+  const csv = require('csvtojson')
+  const json = await csv().fromFile(csvConfirmed);
+  processAllJHUGithubInner(json, "Confirmed");
+  const jsonDeath = await csv().fromFile(csvDeath);
+  processAllJHUGithubInner(jsonDeath, "Death");
+}
+
+async function processAllJHUGithubInner(json, mytype) {
+
+  const errataFipsMap = {
+    "Dukes and Nantucket": "25007",
+    "Kansas City": "20209",
+    "Michigan Department of Corrections (MDOC)": "26997", // made up
+    "Federal Correctional Institution (FCI)": "97", // made up
+    "Bear River": "49985", // made up
+    "Central Utah": "49986", // made up
+    "Southeast Utah": "49987", // made up
+    "Southwest Utah": "49989", // made up
+    "TriCounty": "49984", // made up
+    "Weber-Morgan": "49057",
+  }
+
+  for (let entry of json) {
+    let fips = entry.FIPS;
+    if (!fips || fips.length === 0) {
+      fips = errataFipsMap[entry.Admin2];
+      if (!fips) {
+        console.log("Don't know what to do with " + entry.Admin2)
+        continue;
+      }
+    } else {
+      fips = fips.split(".")[0];
+      if (fips.length === 4) {
+        fips = "0" + fips;
+      }
+    }
+
+    let data = {};
+    for (let key in entry) {
+      if (!key.includes("/")) {
+        continue;
+      }
+      data[Util.normalize_date(key)] = parseInt(entry[key]);
+    }
+
+    if (fips.length === 2) {
+      // terortories
+      AllData[fips].Summary[mytype] = data;
+      continue;
+    } else {
+      let state_fips;
+      let county_fips = fips;
+
+      if (fips.startsWith("70")) {
+        state_fips = 47;
+      } else if (fips.startsWith("80")) {
+        // OUT OF STATE
+        state_fips = fips.slice(3, 5);
+      } else if (fips.startsWith("90")) {
+        // UNAssigned
+        county_fips = "0";
+        state_fips = fips.slice(3, 5);
+        continue;
+      } else if (fips.startsWith("99999")) {
+        // grand princess, fake state
+        AllData["99"].Summary[mytype] = data;
+        continue;
+      } else if (fips.startsWith("88888")) {
+        // diamond princess, fake state
+        AllData["88"].Summary[mytype] = data;
+        continue;
+      } else {
+        // normal
+        // regular counties
+        state_fips = fips.slice(0, 2);
+        // continue; // skipping for testing
+      }
+      let county = getCountyNode(state_fips, county_fips);
+      if (!county) {
+        county = createCountyObject(
+          state_fips,
+          states.getStateCodeByStateName(entry.Province_State),
+          county_fips,
+          entry.Admin2,
+        )
+        if (!county) {
+          console.log("bad JHU data point");
+          console.log(entry);
+          return;
+        }
+      }
+      county[mytype] = data;
+    }
+  }
+}
+
 function processBNO(dataset, date) {
   let data = dataset;
   for (let i = 0; i < data.length; i++) {
@@ -730,67 +894,6 @@ function addStateRecovery() {
   }
 }
 
-//
-// add territories here because these are states without counties. 
-// 
-
-function addTerrtories() {
-  const USTR_Confirmed = require("../data/archive/US-territories-confirmed.json");
-  const USTR_Death = require("../data/archive/US-territories-death.json");
-  console.log("Add confirm for territories")
-  USTR_Confirmed.map(tr => {
-    let fips = tr.FIPS;
-    let newdata = {}
-    for (i in tr) {
-      if (i === "Name" || i === "FIPS") {
-        // delete boro[i];
-      } else {
-        if (tr[i] !== "" && tr[i] !== "0") {
-          newdata[i] = parseInt(tr[i]);
-        }
-      }
-    }
-    let Summary = {};
-    if (Object.keys(newdata).length > 0) {
-      Summary.Confirmed = fillarrayholes(newdata);
-      AllData[fips].Summary = Summary;
-    }
-  });
-
-  console.log("Add death for territories")
-
-  USTR_Death.map(tr => {
-    let fips = tr.FIPS;
-    let newdata = {}
-    for (i in tr) {
-      if (i === "Name" || i === "FIPS") {
-        // delete boro[i];
-      } else {
-        if (tr[i] !== "" && tr[i] !== "0") {
-          newdata[i] = parseInt(tr[i]);
-        }
-      }
-    }
-    let Summary = AllData[fips].Summary;
-    if (Object.keys(newdata).length > 0) {
-      Summary.Death = fillarrayholes(newdata);
-
-      const CC = getValueFromLastDate(Summary.Confirmed);
-      const DD = getValueFromLastDate(Summary.Death);
-
-      Summary.LastConfirmed = CC.num;
-      Summary.LastConfirmedNew = CC.newnum;
-      Summary.LastDeath = DD.num;
-      Summary.LastDeathNew = DD.newnum;
-      Summary.DaysToDouble = getDoubleDays(Confirmed);
-      Summary.DaysToDoubleDeath = getDoubleDays(Death);
-      AllData[fips].Summary = Summary;
-    }
-  });
-  console.log("done with US territories")
-}
-
-
 function add_NYC_BOROS() {
   for (let boro of NYC_STARTER) {
     let state_fips = "36";
@@ -806,7 +909,6 @@ function add_NYC_BOROS() {
     }
   }
 }
-
 
 function Special_NYC_METRO() {
   // special_processing
@@ -936,16 +1038,29 @@ function processNYC_death() {
 }
 
 function extractTestData(entry) {
+
+
   let data = {};
-  data.totalTests = entry.total;
-  data.totalTestResults = entry.totalTestResults;
-  data.totalTestPositive = entry.positive;
-  data.totalRecovered = entry.recovered;
-  data.hospitalized = entry.hospitalized ? entry.hospitalized :
-    (entry.hospitalizedCurrently ? entry.hospitalizedCurrently : entry.hospitalizedCumulative);
-  data.hospitalizedIncreased = entry.hospitalizedIncrease;
-  data.inIcu = entry.inIcuCurrently ? entry.inIcuCurrently : entry.inIcuCumulative;
-  data.onVentilator = entry.onVentilatorCurrently ? entry.onVentilatorCurrently : entry.onVentilatorCumulative;
+  if (entry) {
+    data.totalTests = entry.total;
+    data.totalTestResults = entry.totalTestResults;
+    data.totalTestPositive = entry.positive;
+    data.totalRecovered = entry.recovered;
+    data.hospitalized = entry.hospitalized ? entry.hospitalized :
+      (entry.hospitalizedCurrently ? entry.hospitalizedCurrently : entry.hospitalizedCumulative);
+    data.hospitalizedIncreased = entry.hospitalizedIncrease;
+    data.inIcu = entry.inIcuCurrently ? entry.inIcuCurrently : entry.inIcuCumulative;
+    data.onVentilator = entry.onVentilatorCurrently ? entry.onVentilatorCurrently : entry.onVentilatorCumulative;
+  } else {
+    data.totalTests = 0;
+    data.totalTestResults = 0;
+    data.totalTestPositive = 0;
+    data.totalRecovered = 0;
+    data.hospitalized = 0;
+    data.hospitalizedIncreased = 0;
+    data.inIcu = 0;
+    data.onVentilator = 0;
+  }
   return data;
 }
 
@@ -970,22 +1085,23 @@ function processTestData() {
 // --------------------------------------------------------------
 // ---- Processing area
 // --------------------------------------------------------------
-process_USAFACTS();
-processAllJHU();
-fillholes();
-summarize_counties();
-summarize_states();
-addTerrtories();
-summarize_USA();
-add_NYC_BOROS();
-addMetros();
-Special_NYC_METRO()
-processNYCBOROS_NEW();
-processNYC_death();
-processsShelterInPlace();
-addUSRecovery();
-addStateRecovery();
-processTestData();
-
-const contentPretty = JSON.stringify(AllData, null, 2);
-fs.writeFileSync("./src/data/AllData.json", contentPretty);
+process_USAFACTS(); // this sites tracks county level data before JHU
+processAllJHUGithub().then(() => {
+  processAllJHU();
+  fillholes();
+  summarize_counties();
+  summarize_states();
+  summarize_USA();
+  add_NYC_BOROS();
+  addMetros();
+  Special_NYC_METRO()
+  processNYCBOROS_NEW();
+  processNYC_death();
+  processsShelterInPlace();
+  addUSRecovery();
+  addStateRecovery();
+  processTestData();
+  const contentPretty = JSON.stringify(AllData, null, 2);
+  fs.writeFileSync("./src/data/AllData.json", contentPretty);
+  // console.log(contentPretty);
+});
