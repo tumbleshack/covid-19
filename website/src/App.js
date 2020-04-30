@@ -65,6 +65,11 @@ const MainApp = withRouter((props) => {
   );
 });
 
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+>>>>>>> Turned data credit into a popup
 class UnhookedSafeRoutes extends React.Component {
 
   static getDerivedStateFromProps(props, state) {
