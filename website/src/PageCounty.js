@@ -1,6 +1,6 @@
 import React, { useContext } from 'react';
 import { NearbyCounties } from "./CountyListRender.js"
-import { withHeader } from "./Header.js"
+import { withHeader } from "./ContentWrapping.js"
 import { MyTabs } from "./MyTabs.js"
 import { CountryContext } from "./CountryContext";
 import { USInfoTopWidget } from './USInfoTopWidget.js'
@@ -28,7 +28,7 @@ const PageCounty = withHeader((props) => {
                 desc={`${county.name} County COVID-19 30-day data visualized: `
                           + `confirmed cases, new cases & death curves.`}
             />
-            <USInfoTopWidget county={county} selectedTab={"county"} />
+            <USInfoTopWidget source={county} />
             <GraphSection source={county} />
             <BonusDashboards county={county} />
             <MyTabs

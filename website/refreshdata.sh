@@ -1,4 +1,7 @@
 
+pushd ../COVID-19/ ; git checkout master; git pull; popd
+pushd  ../coronavirus-data/ ;  git checkout master; git pull; popd
+
 temp_file=$(mktemp)
 
 d=`date "+%m-%d-%Y"` 
@@ -119,6 +122,18 @@ if  [ "$filesize" -ge "100" ]; then
     echo "Updated whatsnew.json ($filesize) "
    mv $temp_file ./src/data/whatsnew.json
    git add ./src/data/whatsnew.json
+else
+    echo "file size $filesize too small"
+fi
+
+curl -s "https://docs.google.com/spreadsheets/d/e/2PACX-1vTyCGNMkOWOyoUwIFCCZfNFizxYjikTxTxVSEt0t7sE-D-V0B-B7ZrGyZUuoYpjAl0Xf2geb9i_84be/pub?gid=0&single=true&output=csv" | csvtojson >$temp_file
+filesize=$(wc -c <"$temp_file")
+if  [ "$filesize" -ge "100" ]; then
+    echo "Updated contribors.json ($filesize) "
+   mv $temp_file ./src/data/contributors.json
+   git add ./src/data/contributors.json
 else 
     echo "file size $filesize too small"
 fi
+
+

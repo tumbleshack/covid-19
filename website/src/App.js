@@ -10,6 +10,7 @@ import { PageState } from "./PageState"
 import { PageCounty } from "./PageCounty"
 import { PageMetro } from "./PageMetro"
 import { Page404 } from "./Page404"
+import { DataCreditWidget } from "./graphs/DataCredit"
 import { Country } from "./UnitedStates";
 import { CountryContext } from "./CountryContext";
 import { Title } from "./Title";
@@ -65,11 +66,23 @@ const MainApp = withRouter((props) => {
   );
 });
 
-class SafeRoutes extends React.Component {
+class UnhookedSafeRoutes extends React.Component {
+
+  static getDerivedStateFromProps(props, state) {
+    if (state.location !== props.location) {
+      return UnhookedSafeRoutes.successStateFor(props);
+    } else {
+      return null;
+    }
+  }
+
+  static successStateFor(props) {
+    return {errored: false, location: props.location};
+  }
 
   constructor(props) {
     super(props);
-    this.state = {errored: false};
+    this.state = UnhookedSafeRoutes.successStateFor(props);
   }
 
   componentDidCatch(error, info) {
@@ -88,11 +101,13 @@ class SafeRoutes extends React.Component {
           <Route exact path={routes.united_states} component={PageUS} />
           <Route exact path={routes.metro} component={PageMetro} />
           <Route exact path={routes.united_states_recovery} component={PageUS} />
+          <Route exact path={routes.data_credit} component={DataCreditWidget}/>
           <Route exact path="*" component={Page404} status={404} />
         </Switch>
       );
     }
   }
 }
+const SafeRoutes = withRouter(UnhookedSafeRoutes);
 
 export default App;

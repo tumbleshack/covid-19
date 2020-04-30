@@ -1,6 +1,6 @@
 import React, { useContext } from 'react';
 import { CountryContext } from "./CountryContext";
-import { withHeader } from "./Header.js"
+import { withHeader } from "./ContentWrapping.js"
 import { MyTabs } from "./MyTabs.js"
 import * as Util from "./Util.js"
 import { USInfoTopWidget } from './USInfoTopWidget.js'
@@ -30,12 +30,12 @@ const PageUS = withHeader((props) => {
     return (
         <>
             <Title
-                title={country.longName}
-                desc={`${country.longName} county-level COVID-19 30-day data visualized: `
+                title={country.name}
+                desc={`${country.name} county-level COVID-19 30-day data visualized: `
                           + `confirmed cases, new cases & death curves, `
                           + `testing results & hospitalization numbers.`}
             />
-            <USInfoTopWidget county={county} selectedTab={"usa"} />
+            <USInfoTopWidget source={county || state} />
             <GraphSection source={country} />
             <MyTabs
                 labels={["States of USA", "Testing", "Capita"]}

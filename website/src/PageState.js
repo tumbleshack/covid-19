@@ -1,7 +1,7 @@
 import React, { useContext } from 'react';
 import { CountryContext } from "./CountryContext";
 import * as Util from "./Util"
-import { withHeader } from "./Header.js"
+import { withHeader } from "./ContentWrapping.js"
 import { MyTabs } from "./MyTabs.js"
 import { USInfoTopWidget } from './USInfoTopWidget.js'
 import { CountiesForStateWidget, ListStateCountiesCapita } from "./CountyListRender.js"
@@ -28,7 +28,7 @@ const PageState = withHeader((props) => {
                           + `confirmed cases, new cases & death curves, `
                           + `testing results & hospitalization numbers.`}
             />
-            <USInfoTopWidget county={county} selectedTab={"state"} />
+            <USInfoTopWidget source={county || state} />
             <GraphSection source={state} />
             <MyTabs
                 labels={[`Counties of ${state.name} `, "Per Capita"]}
