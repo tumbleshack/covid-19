@@ -7,10 +7,7 @@ import GitHubIcon from '@material-ui/icons/GitHub';
 import FacebookIcon from '@material-ui/icons/Facebook';
 import Popover from '@material-ui/core/Popover';
 import CreditPopover from './CreditHover'
-<<<<<<< HEAD
-=======
 import { DataCreditWidget } from "./graphs/DataCredit"
->>>>>>> footer
 
 const useStyles = makeStyles(theme => ({
     topContainer: {
